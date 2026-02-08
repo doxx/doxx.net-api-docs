@@ -17,7 +17,7 @@
 
 # doxx.net API
 
-All doxx.net services are accessible via three APIs:
+## Overview
 
 | API | Base URL | Purpose |
 |-----|----------|---------|
@@ -25,171 +25,313 @@ All doxx.net services are accessible via three APIs:
 | **Stats API** | `https://secure-wss.doxx.net` | Real-time bandwidth, security events, threat monitoring |
 | **Conntrack API** | `wss://conntrack.doxx.net/ws` | Real-time connection tracking across all VPN nodes |
 
+**Config API** uses `POST` with `application/x-www-form-urlencoded`. Endpoints are selected by setting `endpoint_name=1` as a parameter.
+
+**Regional failover endpoints:**
+- `https://config-us-east.doxx.net/v1/`
+- `https://config-us-west.doxx.net/v1/`
+- `https://config-eu-central.doxx.net/v1/`
+
 ---
 
-## Quick Start
+## Authentication
 
-### 1. Create an Account
+doxx.net uses token-based auth. No usernames, no passwords, no email.
 
-Account creation requires human verification. **You cannot create accounts via the API directly.**
+| Token Type | What It Is | How You Get It |
+|------------|-----------|----------------|
+| **Auth Token** | Your account identity. ~43 char base64 string. | Human creates account at [a0x13.doxx.net](https://a0x13.doxx.net) |
+| **Tunnel Token** | Identifies a specific VPN tunnel. | Returned by `list_tunnels` or `create_tunnel` |
+| **POW Token** | One-time human verification. | DOXX POW challenge at account creation |
 
-Visit **[https://a0x13.doxx.net](https://a0x13.doxx.net)** to:
+**You cannot create accounts via API.** A human must visit [a0x13.doxx.net](https://a0x13.doxx.net), complete the proof-of-work challenge, and accept the Terms of Service. The auth token from that process is then used for all API calls.
 
-1. Complete the DOXX POW (proof-of-work) challenge
-2. Accept the Terms of Service
-3. Receive your auth token
+---
 
-> Calling `create_account` without a valid POW token returns:
-> ```json
-> {
->   "status": "error",
->   "message": "Account creation requires human verification.",
->   "help": {
->     "steps": [
->       "1. Visit https://a0x13.doxx.net to create an account",
->       "2. Accept the Terms of Service",
->       "3. Save your auth token securely",
->       "4. Use the auth token as the 'token' parameter in all API requests"
->     ]
->   }
-> }
-> ```
+## Common Workflows
 
-### 2. Using Your Token
-
-Your auth token is a URL-safe base64 string. Include it as `token` in every request:
+### Workflow 1: Set Up a VPN Tunnel
 
 ```bash
-curl -X POST https://config.doxx.net/v1/ \
-  -d "list_tunnels=1&token=YOUR_AUTH_TOKEN"
+TOKEN="your_auth_token_here"
+API="https://config.doxx.net/v1/"
+
+# Step 1: List available servers
+curl -s -X POST $API -d "servers=1" | jq '.servers[] | {server_name, location, description}'
+
+# Step 2: Create a tunnel
+curl -s -X POST $API -d "create_tunnel=1&token=$TOKEN&name=My+Laptop&server=wireguard.mia.us.doxx.net" | jq .
+
+# Step 3: List your tunnels (get tunnel_token)
+curl -s -X POST $API -d "list_tunnels=1&token=$TOKEN" | jq '.tunnels[] | {tunnel_token, name, assigned_ip, server}'
+
+# Step 4: Get WireGuard config
+curl -s -X POST $API -d "wireguard=1&token=$TOKEN&tunnel_token=TUNNEL_TOKEN_HERE" | jq .config
 ```
 
-### 3. Key Concepts
+### Workflow 2: Register a Domain and Add DNS Records
 
-| Concept | Description |
-|---------|-------------|
-| **Auth Token** | Your account identity. Treat it like a password. |
-| **Tunnel Token** | Identifies a specific VPN tunnel. Obtained from `list_tunnels`. |
-| **POW Token** | One-time human verification token from DOXX POW challenge. |
+```bash
+# Step 1: Register domain
+curl -s -X POST $API -d "create_domain=1&token=$TOKEN&domain=mysite.doxx" | jq .
+
+# Step 2: Add an A record
+curl -s -X POST $API -d "create_dns_record=1&token=$TOKEN&domain=mysite.doxx&name=mysite.doxx&type=A&content=1.2.3.4&ttl=300" | jq .
+
+# Step 3: Add a wildcard
+curl -s -X POST $API -d "create_dns_record=1&token=$TOKEN&domain=mysite.doxx&name=*.mysite.doxx&type=A&content=1.2.3.4&ttl=300" | jq .
+
+# Step 4: Sign a TLS certificate
+openssl ecparam -genkey -name prime256v1 -out mysite.key
+openssl req -new -key mysite.key -out mysite.csr -subj "/CN=mysite.doxx"
+curl -s -X POST $API -d "sign_certificate=1&token=$TOKEN&domain=mysite.doxx" --data-urlencode "csr=$(cat mysite.csr)" -o mysite.crt
+
+# Step 5: Verify DNS is live
+dig A mysite.doxx @a.root-dx.net +short
+```
+
+### Workflow 3: Configure DNS Blocking
+
+```bash
+# Step 1: See available blocklists
+curl -s -X POST $API -d "dns_get_options=1" | jq '.options[] | {name, display_name, category, domain_count}'
+
+# Step 2: Enable a blocklist on your tunnel
+curl -s -X POST $API -d "dns_set_subscription=1&token=$TOKEN&tunnel_token=TUNNEL_TOKEN&subscription=ads&enabled=1" | jq .
+
+# Step 3: Check tunnel DNS config
+curl -s -X POST $API -d "dns_get_tunnel_config=1&token=$TOKEN&tunnel_token=TUNNEL_TOKEN" | jq .
+
+# Step 4: Add a custom whitelist entry
+curl -s -X POST $API -d "dns_add_whitelist=1&token=$TOKEN&tunnel_token=TUNNEL_TOKEN&domain=example.com" | jq .
+```
+
+### Workflow 4: Monitor Your Network (Stats API)
+
+```bash
+# Real-time events via WebSocket
+websocat "wss://secure-wss.doxx.net/ws?token=$TOKEN"
+
+# Historical bandwidth (last hour)
+curl -s "https://secure-wss.doxx.net/api/stats/bandwidth?token=$TOKEN&start=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)&end=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | jq .
+
+# Security alerts (last 24h)
+curl -s "https://secure-wss.doxx.net/api/stats/alerts?token=$TOKEN&last=1d" | jq '.totals'
+
+# Real-time connections via WebSocket
+websocat "wss://conntrack.doxx.net/ws?token=$TOKEN"
+```
 
 ---
 
-# Config API
+## Error Handling
 
-> **Base URL:** `https://config.doxx.net/v1/`
-> **Method:** `POST` with `application/x-www-form-urlencoded` body
-> **Endpoint selection:** Set `endpoint_name=1` as a parameter (e.g., `list_tunnels=1`)
+All errors return:
 
-### Regional Endpoints
+```json
+{
+  "status": "error",
+  "message": "Description of what went wrong"
+}
+```
 
-| Endpoint | Region |
-|----------|--------|
-| `https://config.doxx.net/v1/` | Primary (anycast) |
-| `https://config-us-east.doxx.net/v1/` | US East (IAD) |
-| `https://config-us-west.doxx.net/v1/` | US West (LAX) |
-| `https://config-eu-central.doxx.net/v1/` | EU Central (ZRH) |
+| HTTP Code | Meaning | What To Do |
+|-----------|---------|------------|
+| 200 | Success | Parse `status` field ("success" or "error") |
+| 400 | Missing/invalid parameter | Check required parameters |
+| 401 | Invalid or missing token | Verify your auth token |
+| 403 | Forbidden | POW required or wrong owner |
+| 404 | Not found | Resource doesn't exist |
+| 500 | Server error | Retry or contact support |
+| 503 | Service degraded | Try a different regional endpoint |
+
+**Important:** HTTP 200 can still contain `"status": "error"` in the JSON body. Always check the `status` field.
 
 ---
 
-## Authentication & Account
+# Config API Reference
+
+## Account
 
 ### `auth`
 
-Validate a token and get account info.
-
 ```bash
-curl -X POST https://config.doxx.net/v1/ -d "auth=1&token=YOUR_TOKEN"
+curl -s -X POST $API -d "auth=1&token=$TOKEN"
 ```
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{"status": "success", "message": "Authentication successful"}
+```
 
-### `create_account`
+### `tos_status`
 
-Create a new account. Requires a valid DOXX POW token (human verification).
+```bash
+curl -s -X POST $API -d "tos_status=1&token=$TOKEN"
+```
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `doxxpow_token` | Yes | POW token from human verification challenge |
+```json
+{"status": "success", "tos_accepted": true, "accepted_at": "2026-01-15 10:00:00", "version": "1.0"}
+```
 
-### `get_profile` / `update_profile`
+### `accept_tos`
 
-Get or update account profile.
+```bash
+curl -s -X POST $API -d "accept_tos=1&token=$TOKEN"
+```
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `email` | No | Email address (update only) |
-| `name` | No | Display name (update only) |
+```json
+{"status": "success", "message": "Terms of Service accepted"}
+```
 
-### `delete_account`
+### `get_profile`
 
-Permanently delete your account and all associated data.
+```bash
+curl -s -X POST $API -d "get_profile=1&token=$TOKEN"
+```
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{
+  "status": "success",
+  "profile": {
+    "recovery_email": null,
+    "recovery_phone": null,
+    "email_notifications": 0,
+    "sms_notifications": 0,
+    "created_at": "2025-06-01 12:00:00",
+    "updated_at": "2026-02-08 10:00:00"
+  },
+  "recovery_codes_count": 10
+}
+```
 
-### `tos_status` / `accept_tos`
+### `update_profile`
 
-Check or accept Terms of Service.
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `email` | No |
+| `name` | No |
 
 ### `create_account_recovery`
 
-Generate recovery codes.
+```bash
+curl -s -X POST $API -d "create_account_recovery=1&token=$TOKEN"
+```
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{
+  "status": "success",
+  "message": "Recovery codes generated successfully",
+  "codes": ["abc123", "def456", "..."],
+  "set_id": "set_abc",
+  "created_at": "2026-02-08T19:00:00Z"
+}
+```
 
 ### `verify_account_recovery`
 
-Recover account using a recovery code.
+| Parameter | Required |
+|-----------|----------|
+| `recovery_code` | Yes |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `recovery_code` | Yes | Recovery code |
+```json
+{"status": "success", "message": "Account recovery successful", "new_token": "new_token_here", "user_id": 123}
+```
+
+### `delete_account`
+
+```bash
+curl -s -X POST $API -d "delete_account=1&token=$TOKEN"
+```
+
+```json
+{"status": "success", "message": "Account deleted successfully"}
+```
 
 ### `merge_account`
 
-Merge one account into another.
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes (destination) |
+| `source_token` | Yes (to merge from) |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Destination account token |
-| `source_token` | Yes | Account to merge from |
+```json
+{
+  "status": "success",
+  "new_token": "master_token",
+  "master_user_id": 4,
+  "merged_tunnels": 3,
+  "merged_whitelist": 5,
+  "merged_blacklist": 2,
+  "message": "Account merged successfully. Please save the new token."
+}
+```
 
 ---
 
-## VPN Tunnels
+## Servers
+
+### `servers`
+
+No auth required.
+
+```bash
+curl -s -X POST $API -d "servers=1"
+```
+
+```json
+{
+  "status": "success",
+  "servers": [
+    {
+      "server_name": "wireguard.mia.us.doxx.net",
+      "location": "Miami, FL",
+      "description": "US Southeast",
+      "type": "wireguard",
+      "public_key": "abc123...",
+      "best_for": "US East Coast",
+      "operator": "doxx.net",
+      "bg_image": "miami.jpg",
+      "flag_image": "us.svg",
+      "continent": "NA"
+    }
+  ]
+}
+```
+
+---
+
+## Tunnels
 
 ### `list_tunnels`
 
-List all VPN tunnels.
-
 ```bash
-curl -X POST https://config.doxx.net/v1/ -d "list_tunnels=1&token=YOUR_TOKEN"
+curl -s -X POST $API -d "list_tunnels=1&token=$TOKEN"
 ```
 
-**Response:**
 ```json
 {
   "status": "success",
   "tunnels": [
     {
-      "tunnel_token": "abc123...",
+      "tunnel_token": "Eh1xwlLd...",
       "name": "My Laptop",
+      "server": "wireguard.mia.us.doxx.net",
       "assigned_ip": "10.1.0.226/31",
       "assigned_v6": "2602:f5c1:1::1c0:8916/127",
-      "server": "wireguard.mia.us.doxx.net",
+      "public_key": "abc...",
+      "private_key": "xyz...",
+      "type": "wireguard",
+      "device_hash": "",
+      "device_type": "",
+      "created_at": "2025-06-01T12:00:00Z",
+      "block_bad_dns": 1,
       "firewall": 1,
       "ipv6_enabled": 1,
-      "block_bad_dns": 1
+      "onion_enabled": 0,
+      "proxy_enabled": 0,
+      "is_connected": true,
+      "connection_status": "connected"
     }
   ]
 }
@@ -201,7 +343,11 @@ curl -X POST https://config.doxx.net/v1/ -d "list_tunnels=1&token=YOUR_TOKEN"
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `name` | No | Tunnel name |
-| `server` | Yes | Server hostname (from `servers`) |
+| `server` | Yes | Server hostname from `servers` endpoint |
+
+```json
+{"status": "success", "message": "Tunnel created successfully"}
+```
 
 ### `create_tunnel_mobile`
 
@@ -209,8 +355,21 @@ curl -X POST https://config.doxx.net/v1/ -d "list_tunnels=1&token=YOUR_TOKEN"
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `server` | Yes | Server hostname |
-| `device_hash` | No | Device identifier hash |
+| `device_hash` | No | Device identifier |
 | `device_type` | No | `mobile`, `desktop`, `server`, `web` |
+
+```json
+{
+  "status": "success",
+  "message": "Mobile tunnel created successfully",
+  "tunnel_token": "new_token...",
+  "server": "wireguard.mia.us.doxx.net",
+  "assigned_ip": "10.1.2.3/31",
+  "assigned_v6": "2602:f5c1:1::abc:1234/127",
+  "public_key": "abc...",
+  "private_key": "xyz..."
+}
+```
 
 ### `update_tunnel`
 
@@ -220,34 +379,59 @@ curl -X POST https://config.doxx.net/v1/ -d "list_tunnels=1&token=YOUR_TOKEN"
 | `tunnel_token` | Yes | Tunnel token |
 | `name` | No | New name |
 | `server` | No | New server |
-| `firewall` | No | `1` enable, `0` disable |
-| `ipv6_enabled` | No | `1` enable, `0` disable |
-| `block_bad_dns` | No | `1` enable DNS blocking, `0` disable |
+| `firewall` | No | `1` or `0` |
+| `ipv6_enabled` | No | `1` or `0` |
+| `block_bad_dns` | No | `1` or `0` |
+
+```json
+{"status": "success", "message": "Tunnel updated successfully"}
+```
 
 ### `delete_tunnel`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
+
+```json
+{"status": "success", "message": "Tunnel deleted successfully"}
+```
 
 ### `wireguard`
 
-Get WireGuard configuration (keys, IPs, endpoint).
+Get WireGuard configuration file data.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
+
+```json
+{
+  "status": "success",
+  "config": {
+    "interface": {
+      "private_key": "your_private_key",
+      "address": "10.1.0.227/31, 2602:f5c1:1::1c0:8917/128",
+      "dns": "10.10.10.10,fd53::"
+    },
+    "peer": {
+      "public_key": "server_public_key",
+      "allowed_ips": "0.0.0.0/0, ::/0",
+      "endpoint": "wireguard.mia.us.doxx.net:51820",
+      "persistent_keepalive": 25
+    }
+  }
+}
+```
 
 ### `disconnect_peer`
 
-Force disconnect a peer from the WireGuard server.
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
 
 ---
 
@@ -255,58 +439,103 @@ Force disconnect a peer from the WireGuard server.
 
 ### `dns_get_options`
 
-List available DNS blocking categories. No auth required.
+No auth required.
+
+```json
+{
+  "status": "success",
+  "options": [
+    {
+      "name": "ads",
+      "display_name": "Advertising",
+      "description": "Block ad networks and trackers",
+      "category": "privacy",
+      "icon": "ad-icon",
+      "domain_count": 150000,
+      "default_enabled": true,
+      "user_toggleable": true,
+      "is_base_safety": false
+    }
+  ]
+}
+```
 
 ### `dns_get_tunnel_config`
 
-Get DNS blocking config for a tunnel.
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+```json
+{
+  "status": "success",
+  "tunnel_token": "abc...",
+  "dns_blocking_enabled": true,
+  "base_protections": ["malware", "phishing"],
+  "subscriptions": [
+    {"blocklist_name": "ads", "enabled": 1}
+  ],
+  "whitelists": [
+    {"domain": "example.com", "reason": null}
+  ],
+  "blacklists": [
+    {"domain": "evil.com", "reason": "manual block"}
+  ]
+}
+```
 
 ### `dns_set_subscription`
 
-Enable/disable a DNS blocking category.
-
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `tunnel_token` | Yes | Tunnel token |
-| `subscription` | Yes | Category name |
+| `subscription` | Yes | Blocklist name |
 | `enabled` | Yes | `1` or `0` |
 | `apply_to_all` | No | `1` to apply to all tunnels |
 
+```json
+{"status": "success", "message": "Subscription updated", "blocklist": "ads", "enabled": true, "tunnels_updated": 1}
+```
+
 ### `dns_add_whitelist` / `dns_remove_whitelist`
 
-Manage DNS whitelist (always allow).
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
-| `domain` | Yes | Domain |
-| `apply_to_all` | No | `1` to apply to all tunnels |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
+| `domain` | Yes |
+| `apply_to_all` | No |
 
 ### `dns_add_blacklist` / `dns_remove_blacklist`
 
-Manage DNS blacklist (always block).
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
-| `domain` | Yes | Domain |
-| `apply_to_all` | No | `1` to apply to all tunnels |
+Same parameters as whitelist.
 
 ### `dns_blocklist_stats`
 
-Get DNS blocking statistics.
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{
+  "status": "success",
+  "total_domains": 500000,
+  "count": 12,
+  "lists": [
+    {
+      "name": "ads",
+      "display_name": "Advertising",
+      "domain_count": 150000,
+      "category": "privacy",
+      "is_base_safety": false,
+      "default_enabled": true,
+      "enabled": true
+    }
+  ]
+}
+```
 
 ---
 
@@ -319,6 +548,24 @@ Get DNS blocking statistics.
 | `token` | Yes | Auth token |
 | `tunnel_token` | No | Filter by tunnel |
 
+```json
+{
+  "status": "success",
+  "link_all_enabled": false,
+  "rules": [
+    {
+      "tunnel_token": "abc...",
+      "protocol": "TCP",
+      "src_ip": "0.0.0.0/0",
+      "src_port": "ALL",
+      "dst_ip": "10.1.0.227",
+      "dst_port": "443"
+    }
+  ],
+  "count": 1
+}
+```
+
 ### `firewall_rule_add`
 
 | Parameter | Required | Description |
@@ -327,40 +574,49 @@ Get DNS blocking statistics.
 | `tunnel_token` | Yes | Tunnel token |
 | `protocol` | Yes | `TCP`, `UDP`, `ICMP`, `ALL` |
 | `src_ip` | Yes | Source IP/CIDR |
-| `src_port` | Yes | Source port or `ALL` |
-| `dst_ip` | Yes | Destination IP (your tunnel IP) |
+| `src_port` | Yes | Port or `ALL` |
+| `dst_ip` | Yes | Your tunnel IP |
 | `dst_port` | Yes | Destination port |
+
+```json
+{
+  "status": "success",
+  "message": "Firewall rule created successfully",
+  "rule": {"tunnel_token": "abc...", "protocol": "TCP", "src_ip": "0.0.0.0/0", "src_port": "ALL", "dst_ip": "10.1.0.227", "dst_port": "443", "enabled": 1}
+}
+```
 
 ### `firewall_rule_delete`
 
 Same parameters as `firewall_rule_add`.
 
+```json
+{"status": "success", "message": "Firewall rule deleted successfully"}
+```
+
 ### `firewall_link_all_toggle`
 
-Enable/disable Link All Tunnels (mesh networking between your tunnels).
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `enabled` | Yes (`1` or `0`) |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `enabled` | Yes | `1` or `0` |
+```json
+{"status": "success", "message": "Link all enabled", "link_all_tunnels": 1, "rules_deleted": 0}
+```
 
 ### `firewall_link_all_status`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{"status": "success", "link_all_tunnels": 0}
+```
 
 ---
 
-## Domain Management
+## Domains
 
 ### `list_domains`
 
-```bash
-curl -X POST https://config.doxx.net/v1/ -d "list_domains=1&token=YOUR_TOKEN"
-```
-
-**Response:**
 ```json
 {
   "status": "success",
@@ -372,36 +628,48 @@ curl -X POST https://config.doxx.net/v1/ -d "list_domains=1&token=YOUR_TOKEN"
 
 ### `create_domain`
 
-Register a doxx.net domain. 196 TLDs available (`.doxx`, `.crypto`, `.vpn`, `.hack`, `.dao`, `.eth`, and more).
-
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
-| `domain` | Yes | Domain name (e.g., `mysite.doxx` or `mysite` for default `.doxx`) |
+| `domain` | Yes | e.g., `mysite.doxx` or `mysite` (defaults to `.doxx`) |
+
+196 TLDs available: `.doxx`, `.crypto`, `.vpn`, `.hack`, `.dao`, `.eth`, `.dns`, `.tor`, `.onion`, `.cyber`, and more.
+
+```json
+{"status": "success", "message": "Domain registered successfully"}
+```
 
 ### `delete_domain`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | Domain to delete |
+```json
+{"status": "success", "message": "Domain deleted successfully"}
+```
 
 ### `import_domain`
 
-Import an external domain (`.com`, `.net`, `.org`, etc.) via TXT record verification.
+Import external domains (`.com`, `.net`, `.org`) via TXT record verification.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | External domain |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `domain` | Yes |
+
+```json
+{
+  "status": "success",
+  "message": "Domain imported successfully",
+  "nameservers": ["a.root-dx.net", "a.root-dx.com", "a.root-dx.org"],
+  "note": "Update your domain registrar to use these nameservers"
+}
+```
 
 ### `get_domain_validation`
 
-Get a validation code for domain import. Set it as a TXT record at `_doxx-verify.yourdomain.com`.
+Get the TXT verification code. Set as `_doxx-verify.yourdomain.com` TXT record, then call `import_domain`.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{"status": "success", "validation_code": "a1b2c3d4e5f6..."}
+```
 
 ---
 
@@ -411,105 +679,146 @@ Supported types: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`, `SRV`, `PTR`
 
 ### `list_dns`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | Domain name |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `domain` | Yes |
+
+```json
+{
+  "status": "success",
+  "domain": "mysite.doxx",
+  "records": [
+    {"name": "mysite.doxx", "type": "A", "content": "1.2.3.4", "ttl": 300, "prio": 0},
+    {"name": "mysite.doxx", "type": "SOA", "content": "ns.doxx. hostmaster.doxx. 2026020801 10800 3600 604800 3600", "ttl": 3600, "prio": 0},
+    {"name": "mysite.doxx", "type": "NS", "content": "ns.doxx.", "ttl": 3600, "prio": 0}
+  ]
+}
+```
 
 ### `create_dns_record`
 
-```bash
-curl -X POST https://config.doxx.net/v1/ \
-  -d "create_dns_record=1&token=YOUR_TOKEN&domain=mysite.doxx&name=www.mysite.doxx&type=A&content=1.2.3.4&ttl=300"
-```
-
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `domain` | Yes | Domain name |
-| `name` | Yes | Record name (FQDN or `@` for apex) |
+| `name` | Yes | FQDN or `@` for apex |
 | `type` | Yes | Record type |
 | `content` | Yes | Record value |
-| `ttl` | No | TTL in seconds (default: 3600) |
-| `prio` | No | Priority (MX/SRV) |
+| `ttl` | No | Default: 3600 |
+| `prio` | No | Priority (MX) |
 
-**SRV records** use additional parameters: `srv_priority`, `srv_weight`, `srv_port`, `srv_target`.
+SRV records use: `srv_priority`, `srv_weight`, `srv_port`, `srv_target`
+
+```json
+{"status": "success", "message": "DNS record created successfully"}
+```
 
 ### `update_dns_record`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | Domain name |
-| `old_name` | Yes | Current record name |
-| `old_type` | Yes | Current record type |
-| `old_content` | Yes | Current record content |
-| `name` | Yes | New name |
-| `content` | Yes | New content |
-| `ttl` | Yes | New TTL |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `domain` | Yes |
+| `old_name` | Yes |
+| `old_type` | Yes |
+| `old_content` | Yes |
+| `name` | Yes |
+| `content` | Yes |
+| `ttl` | Yes |
+
+```json
+{"status": "success", "message": "DNS record updated successfully"}
+```
 
 ### `delete_dns_record`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | Domain name |
-| `name` | Yes | Record name |
-| `type` | Yes | Record type |
-| `content` | Yes | Record content |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `domain` | Yes |
+| `name` | Yes |
+| `type` | Yes |
+| `content` | Yes |
+
+```json
+{"status": "success", "message": "DNS record deleted successfully"}
+```
 
 ---
 
 ## Public DNS (Secure DNS Sharing)
 
+Create DoH/DoT endpoints that share your tunnel's DNS blocking config: `HASH.sdns.doxx.net`
+
 ### `public_dns_list_hashes`
 
-List your Secure DNS hashes. Each hash creates a `HASH.sdns.doxx.net` DoH/DoT endpoint.
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
+```json
+{
+  "status": "success",
+  "count": 1,
+  "hashes": [
+    {
+      "host_hash": "gl6nqcbyhsau",
+      "tunnel_token": "abc...",
+      "label": "",
+      "created_at": "2025-12-01 10:00:00",
+      "tunnel_name": "My Laptop",
+      "tunnel_server": "wireguard.mia.us.doxx.net",
+      "doh_url": "https://gl6nqcbyhsau.sdns.doxx.net/dns-query",
+      "dot_host": "gl6nqcbyhsau.sdns.doxx.net"
+    }
+  ]
+}
+```
 
 ### `public_dns_create_hash`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
+
+```json
+{
+  "status": "success",
+  "host_hash": "gl6nqcbyhsau",
+  "tunnel_token": "abc...",
+  "doh_url": "https://gl6nqcbyhsau.sdns.doxx.net/dns-query",
+  "dot_host": "gl6nqcbyhsau.sdns.doxx.net"
+}
+```
 
 ### `public_dns_delete_hash`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `host_hash` | Yes | Hash to delete |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `host_hash` | Yes |
 
 ---
 
-## Proxy Configuration
+## Proxy
 
 ### `get_proxy_config`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `tunnel_token` | Yes | Tunnel token |
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `tunnel_token` | Yes |
 
-**Response:**
 ```json
 {
   "status": "success",
   "config": {
-    "tunnel_token": "...",
-    "assigned_ip": "10.x.x.x",
-    "assigned_v6": "2602:...",
-    "enabled": true,
+    "tunnel_token": "abc...",
+    "assigned_ip": "10.1.0.226",
+    "assigned_v6": "2602:f5c1:1::1c0:8916",
+    "enabled": false,
     "location": "newyork-us",
     "browser": null,
     "custom_lat": null,
-    "custom_lon": null,
-    "custom_timezone": null,
-    "custom_language": null
+    "custom_lon": null
   }
 }
 ```
@@ -521,139 +830,145 @@ List your Secure DNS hashes. Each hash creates a `HASH.sdns.doxx.net` DoH/DoT en
 | `token` | Yes | Auth token |
 | `tunnel_token` | Yes | Tunnel token |
 | `enabled` | No | `1` to enable |
-| `location` | No | Location ID (default: `newyork-us`) |
+| `location` | No | Location ID |
 | `browser` | No | Browser fingerprint |
+
+```json
+{"status": "success", "message": "Proxy configuration updated"}
+```
 
 ---
 
-## Certificate Signing
+## Certificates
 
 ### `sign_certificate`
 
-Sign a CSR with the doxx.net root CA. Automatically upgrades to wildcard.
+Signs a CSR with the doxx.net root CA. Auto-upgrades to wildcard. **Returns raw PEM, not JSON.**
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `domain` | Yes | Domain (must be owned by you) |
-| `csr` | Yes | PEM-encoded CSR |
-
-**Returns:** Raw PEM certificate (not JSON).
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `domain` | Yes (must own it) |
+| `csr` | Yes (PEM-encoded) |
 
 ```bash
-openssl ecparam -genkey -name prime256v1 -out mysite.key
-openssl req -new -key mysite.key -out mysite.csr -subj "/CN=mysite.doxx"
-
-curl -X POST https://config.doxx.net/v1/ \
-  -d "sign_certificate=1&token=YOUR_TOKEN&domain=mysite.doxx" \
+curl -s -X POST $API \
+  -d "sign_certificate=1&token=$TOKEN&domain=mysite.doxx" \
   --data-urlencode "csr=$(cat mysite.csr)" -o mysite.crt
 ```
 
-The signed certificate includes SAN entries for both `*.mysite.doxx` and `mysite.doxx`.
+The certificate includes SAN: `DNS:*.mysite.doxx, DNS:mysite.doxx`
 
 ---
 
-## Mobile Options (iOS)
+## Mobile Options
 
-### `get_mobile_options` / `set_mobile_options`
+### `get_mobile_options`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Auth token |
-| `connect_on_startup` | No | `1` or `0` (set only) |
-| `kill_switch` | No | `1` or `0` (set only) |
-| `proxy_enabled` | No | `1` or `0` (set only) |
-| `onion_enabled` | No | `1` or `0` (set only) |
+```json
+{
+  "status": "success",
+  "mobile_options": {
+    "connect_on_startup": 0,
+    "kill_switch": 0,
+    "transport": "wireguard",
+    "proxy_enabled": 0,
+    "onion_enabled": 0,
+    "port": null
+  }
+}
+```
+
+### `set_mobile_options`
+
+| Parameter | Required |
+|-----------|----------|
+| `token` | Yes |
+| `connect_on_startup` | No (`1`/`0`) |
+| `kill_switch` | No (`1`/`0`) |
+| `proxy_enabled` | No (`1`/`0`) |
+| `onion_enabled` | No (`1`/`0`) |
 
 ---
 
 ## Utility
 
-### `servers`
-
-List available VPN servers. **No auth required.**
-
-```bash
-curl -X POST https://config.doxx.net/v1/ -d "servers=1"
-```
-
 ### `version_check`
 
-Get current app version. **No auth required.**
+No auth required.
+
+```json
+{"status": "success", "version": "2.1.0", "download_url": "https://doxx.net/download"}
+```
 
 ### `generate_qr`
 
-Generate a QR code PNG. **No auth required.**
+No auth required. **Returns binary PNG, not JSON.**
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `data` | Yes | Text to encode |
-| `size` | No | Pixels (100-2048, default: 512) |
+| `size` | No | 100-2048 pixels (default: 512) |
 
-**Returns:** Binary PNG image.
+```bash
+curl -s -X POST $API -d "generate_qr=1&data=hello&size=256" -o qr.png
+```
 
 ---
 
-## DOXX POW (Human Verification)
+## DOXX POW
 
 ### `doxxpow_challenge`
 
-Request a proof-of-work challenge. **No auth required.**
+No auth required. Returns a proof-of-work challenge.
 
 ### `doxxpow_verify`
 
-Submit a completed proof-of-work solution. **No auth required.**
+No auth required. Submits a completed POW solution, returns a token.
 
 ### `doxxpow_validate_token`
 
-Validate a POW token (internal use).
+| Parameter | Required |
+|-----------|----------|
+| `pow_token` | Yes |
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `pow_token` | Yes | POW token |
+```json
+{"status": "success", "valid": true, "accuracy": 95}
+```
 
 ---
 
 # Stats API
 
-> **Base URL:** `https://secure-wss.doxx.net`
-> Real-time VPN statistics, bandwidth monitoring, and security event streaming.
+> `https://secure-wss.doxx.net`
 
-## WebSocket Stream
+## WebSocket
 
 ```
 wss://secure-wss.doxx.net:443/ws?token=YOUR_TOKEN
 ```
 
-Optional parameter: `tunnel_token` to filter to a single tunnel (mobile mode).
+Optional: `&tunnel_token=X` to filter to one tunnel.
 
 ### Event Types
 
-#### Threat Events
-
 | Type | Description | Key Fields |
 |------|-------------|------------|
-| `dns_block` | Blocked DNS query | `domain`, `category` (ads/tracking/malware), `source` |
-| `security_event` | Security alert | `category`, `service`, `port`, `protocol`, `src`, `dst` |
-| `dangerous_port` | Connection to dangerous port | `service` (SSH/Telnet), `port`, `protocol`, `src`, `dst` |
-| `dns_bypass` | DNS bypass attempt | `provider`, `dst` |
-| `doh_bypass` | DoH bypass attempt | `provider`, `dst` |
-| `doh_blocked` | DoH request blocked | `provider` |
-
-#### Monitoring Events
-
-| Type | Description | Key Fields |
-|------|-------------|------------|
-| `bandwidth` | Bandwidth usage (Mbps) | `value` (format: `in=X,out=Y`), `prefix` |
-| `dns_nxdomain` | Non-existent domain query | `domain` |
+| `dns_block` | Blocked DNS query | `value` (domain), `category`, `count` |
+| `security_event` | Security alert | `category`, `value` (service/port info) |
+| `dangerous_port` | Dangerous port connection | `value` (e.g., "SSH (Port 22)") |
+| `dns_bypass` | DNS bypass attempt | `value` (provider) |
+| `doh_bypass` | DoH bypass attempt | `value` (provider) |
+| `bandwidth` | Bandwidth (Mbps) | `value` (format: `in=X,out=Y`) |
+| `dns_nxdomain` | Non-existent domain | `value` (domain) |
 | `tunnel_status` | Tunnel state change | `value` (sleeping/offline) |
-| `port_scan` | Port scanning detected | `src`, `dst`, `port` |
+| `port_scan` | Port scan detected | `value` (details) |
 
 ### Event Structure
 
 ```json
 {
-  "tunnel_token": "...",
+  "tunnel_token": "abc...",
   "ts": 1707400000,
   "prefix": "10.1.0.226/31",
   "type": "dns_block",
@@ -669,40 +984,25 @@ Optional parameter: `tunnel_token` to filter to a single tunnel (mobile mode).
 }
 ```
 
-## REST Endpoints
+## REST
 
 ### `GET /api/stats/bandwidth`
-
-Historical bandwidth data with automatic granularity.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `tunnel_token` | No | Filter by tunnel |
-| `start` | No | ISO 8601 start time (default: 1h ago) |
-| `end` | No | ISO 8601 end time (default: now) |
+| `start` | No | ISO 8601 (default: 1h ago) |
+| `end` | No | ISO 8601 (default: now) |
 
-**Response:**
 ```json
 {
   "granularity": "1m",
   "data": [
-    {
-      "tunnel_token": "...",
-      "timestamp": 1707400000,
-      "peak_in": 125.5,
-      "peak_out": 42.3,
-      "samples": 60
-    }
+    {"tunnel_token": "abc...", "timestamp": 1707400000, "peak_in": 125.5, "peak_out": 42.3, "samples": 60}
   ],
   "aggregate": [
-    {
-      "tunnel_token": "aggregate",
-      "timestamp": 1707400000,
-      "peak_in": 125.5,
-      "peak_out": 42.3,
-      "samples": 60
-    }
+    {"tunnel_token": "aggregate", "timestamp": 1707400000, "peak_in": 125.5, "peak_out": 42.3, "samples": 60}
   ]
 }
 ```
@@ -711,18 +1011,14 @@ Granularity auto-selects: `1s` (<5m), `1m` (<6h), `5m` (<48h), `1h` (<30d), `6h`
 
 ### `GET /api/stats/alerts`
 
-Historical security events and alerts.
-
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
 | `tunnel_token` | No | Filter by tunnel |
-| `last` | No | Shortcut: `session`, `1m`, `1h`, `1d`, `7d`, `30d` |
-| `start` | No | ISO 8601 start (alternative to `last`) |
-| `end` | No | ISO 8601 end |
+| `last` | No | `session`, `1m`, `1h`, `1d`, `7d`, `30d` |
+| `start` / `end` | No | ISO 8601 (alternative to `last`) |
 | `type` | No | Filter by event type |
 
-**Response:**
 ```json
 {
   "granularity": "1m",
@@ -730,33 +1026,21 @@ Historical security events and alerts.
   "block_count": 1234,
   "category_counts": {"ads": 800, "tracking": 300, "malware": 134},
   "data": [
-    {
-      "tunnel_token": "...",
-      "prefix": "10.1.0.226/31",
-      "type": "dns_block",
-      "action": "block",
-      "value": "doubleclick.net",
-      "timestamp": 1707400000,
-      "count": 42,
-      "last_seen": 1707403600
-    }
+    {"type": "dns_block", "value": "doubleclick.net", "count": 42, "timestamp": 1707400000, "last_seen": 1707403600}
   ]
 }
 ```
 
 ### `GET /api/stats/summary`
 
-Summary statistics over a time period.
-
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
-| `tunnel_token` | No | Filter by tunnel |
-| `days` | No | Number of days (default: 30) |
+| `days` | No | Default: 30 |
 
 ### `GET /api/stats/global`
 
-Global threat counter. **No auth required.**
+No auth. Returns global threat counter.
 
 ```json
 {"status": "success", "total": 1234567890, "ts": 1707400000}
@@ -764,36 +1048,23 @@ Global threat counter. **No auth required.**
 
 ### `wss://secure-wss.doxx.net/ws/global`
 
-Public WebSocket for global threat counter (landing page widget). **No auth required.**
-
-```json
-{"type": "global_stats", "total": 1234567890, "ts": 1707400000}
-```
+Public WebSocket. Streams global threat counter updates. No auth.
 
 ---
 
 # Conntrack API
 
-> **Base URL:** `wss://conntrack.doxx.net/ws`
-> Real-time connection tracking across all VPN backbone nodes.
+> `wss://conntrack.doxx.net/ws`
 
-## WebSocket Stream
+Real-time connection tracking across all VPN backbone nodes.
 
 ```
 wss://conntrack.doxx.net:443/ws?token=YOUR_TOKEN
 ```
 
-### Message Types
+### Messages
 
-#### `initial`
-
-Sent immediately on connection. Contains all current connections.
-
-#### `snapshot`
-
-Sent every 10 seconds with updated connection data.
-
-### Message Structure
+First message: `type: "initial"` (all current connections). Then `type: "snapshot"` every 10 seconds.
 
 ```json
 {
@@ -810,13 +1081,10 @@ Sent every 10 seconds with updated connection data.
       "dst_port": 443,
       "bytes_sent": 1234,
       "bytes_recv": 56789,
-      "packets_sent": 12,
-      "packets_recv": 45,
       "upload_speed": 1024.5,
       "download_speed": 8192.0,
       "server": "bh1.mia1.doxx.net",
-      "tunnel_name": "My Laptop",
-      "is_local": false
+      "tunnel_name": "My Laptop"
     }
   ],
   "stats": {
@@ -837,42 +1105,8 @@ GET https://conntrack.doxx.net/health
 ```
 
 ```json
-{
-  "status": "healthy",
-  "mode": "master",
-  "clients": 3,
-  "timestamp": 1707400000,
-  "worker_connections": 4
-}
+{"status": "healthy", "mode": "master", "clients": 3, "worker_connections": 4, "timestamp": 1707400000}
 ```
-
----
-
-## Error Responses
-
-All errors follow this format:
-
-```json
-{
-  "status": "error",
-  "message": "Description of what went wrong"
-}
-```
-
-| HTTP Code | Meaning |
-|-----------|---------|
-| 200 | Success |
-| 400 | Bad request (missing/invalid parameters) |
-| 401 | Unauthorized (invalid token) |
-| 403 | Forbidden (POW required or permission denied) |
-| 404 | Not found |
-| 500 | Server error |
-
----
-
-## Rate Limits
-
-No strict rate limits currently enforced. Please be reasonable with automated requests.
 
 ---
 
@@ -881,7 +1115,5 @@ No strict rate limits currently enforced. Please be reasonable with automated re
 - **Portal:** [a0x13.doxx.net](https://a0x13.doxx.net)
 - **Discord:** [discord.gg/Gr9rByrEzZ](https://discord.gg/Gr9rByrEzZ)
 - **Email:** support@doxx.net
-
----
 
 <p align="center"><em>doxx.net - Freedom and Privacy by Design</em></p>
