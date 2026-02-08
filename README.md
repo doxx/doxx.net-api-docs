@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Privacy is a right, not a privilege.</strong>
+  <strong>Freedom and Privacy by Design</strong>
 </p>
 
 <p align="center">
@@ -1018,4 +1018,4 @@ No strict rate limits currently enforced. Please be reasonable with automated re
 
 ---
 
-<p align="center"><em>doxx.net — Privacy is a right, not a privilege.</em></p>
+<p align="center"><em>doxx.net — Freedom and Privacy by Design</em></p>
