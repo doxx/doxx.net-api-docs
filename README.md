@@ -884,4 +884,4 @@ No strict rate limits currently enforced. Please be reasonable with automated re
 
 ---
 
-<p align="center"><em>doxx.net — Freedom and Privacy by Design</em></p>
+<p align="center"><em>doxx.net - Freedom and Privacy by Design</em></p>
