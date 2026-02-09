@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doxx/doxx.net-style/main/logo-png/imagotype-white/imagotype-white-512.png" alt="doxx.net" width="300">
+  <img src="https://raw.githubusercontent.com/doxx/doxx.net/main/assets/imagotype-white-512.png" alt="doxx.net" width="300">
 </p>
 
 <p align="center">
@@ -23,7 +23,6 @@
 |-----|----------|---------|
 | **Config API** | `https://config.doxx.net/v1/` | Account, tunnels, DNS, domains, firewall, proxy, certificates |
 | **Stats API** | `https://secure-wss.doxx.net` | Real-time bandwidth, security events, threat monitoring |
-| **Conntrack API** | `wss://conntrack.doxx.net/ws` | Real-time connection tracking across all VPN nodes |
 
 **Config API** uses `POST` with `application/x-www-form-urlencoded`. Endpoints are selected by setting `endpoint_name=1` as a parameter.
 
@@ -117,9 +116,6 @@ curl -s "https://secure-wss.doxx.net/api/stats/bandwidth?token=$TOKEN&start=$(da
 
 # Security alerts (last 24h)
 curl -s "https://secure-wss.doxx.net/api/stats/alerts?token=$TOKEN&last=1d" | jq '.totals'
-
-# Real-time connections via WebSocket
-websocat "wss://conntrack.doxx.net/ws?token=$TOKEN"
 ```
 
 ### Workflow 5: Install WireGuard and Connect
@@ -1399,64 +1395,6 @@ No auth. Returns global threat counter.
 ### `wss://secure-wss.doxx.net/ws/global`
 
 Public WebSocket. Streams global threat counter updates. No auth.
-
----
-
-# Conntrack API
-
-> `wss://conntrack.doxx.net/ws`
-
-Real-time connection tracking across all VPN backbone nodes.
-
-```
-wss://conntrack.doxx.net:443/ws?token=YOUR_TOKEN
-```
-
-### Messages
-
-First message: `type: "initial"` (all current connections). Then `type: "snapshot"` every 10 seconds.
-
-```json
-{
-  "type": "snapshot",
-  "timestamp": 1707400000,
-  "connections": [
-    {
-      "id": "10.1.0.227:49823-93.184.216.34:443",
-      "protocol": "tcp",
-      "state": "ESTABLISHED",
-      "src_ip": "10.1.0.227",
-      "dst_ip": "93.184.216.34",
-      "src_port": 49823,
-      "dst_port": 443,
-      "bytes_sent": 1234,
-      "bytes_recv": 56789,
-      "upload_speed": 1024.5,
-      "download_speed": 8192.0,
-      "server": "bh1.mia1.doxx.net",
-      "tunnel_name": "My Laptop"
-    }
-  ],
-  "stats": {
-    "total_connections": 67,
-    "total_upload": 1048576,
-    "total_download": 10485760,
-    "upload_speed": 5120.0,
-    "download_speed": 40960.0,
-    "protocol_breakdown": {"tcp": 60, "udp": 7}
-  }
-}
-```
-
-### Health Check
-
-```
-GET https://conntrack.doxx.net/health
-```
-
-```json
-{"status": "healthy", "mode": "master", "clients": 3, "worker_connections": 4, "timestamp": 1707400000}
-```
 
 ---
 
