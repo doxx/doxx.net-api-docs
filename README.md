@@ -17,6 +17,10 @@
 
 # doxx.net API
 
+## What is doxx.net?
+
+doxx.net is a Virtual Networking Platform (VNP) built from the ground up for user rights, freedom of speech, flexibility, and privacy. Unlike traditional VPNs that simply tunnel traffic, doxx.net provides a complete networking platform with private mesh networking between devices, custom domain registration with 196 TLDs, authoritative DNS hosting, DNS threat blocking, geo-spoofing proxy, dedicated static IPs, certificate signing, and device-to-device firewall rules. Every component is designed with privacy as a core principle: accounts require no email or personal data, authentication is token-based, and the platform operates its own global DNS infrastructure independent of ICANN.
+
 ## Overview
 
 | API | Base URL | Purpose |
