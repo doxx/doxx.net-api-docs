@@ -4,7 +4,7 @@
 
 doxx.net supports multiple auth tokens per account. Each token has a role, optional expiration, and can be restricted by IP address, country, or specific tunnels. Tokens are managed through the Config API using the endpoints below.
 
-All token management endpoints require authentication with an existing token. The `list_tokens` endpoint is available to any token role. All other management endpoints require `admin` role.
+All token management endpoints require authentication with an existing token. The `user_list_tokens` endpoint is available to any token role. All other management endpoints require `admin` role.
 
 ## Roles
 
@@ -20,7 +20,7 @@ Roles are hierarchical: `admin` includes all `net-admin` permissions, which incl
 
 ## Token CRUD
 
-### list_tokens
+### user_list_tokens
 
 List all tokens for the authenticated account.
 
@@ -28,7 +28,7 @@ List all tokens for the authenticated account.
 
 | Param | Required | Description |
 |-------|----------|-------------|
-| `list_tokens` | Yes | Set to `1` |
+| `user_list_tokens` | Yes | Set to `1` |
 | `token` | Yes | Your auth token |
 
 **Response:**
@@ -38,7 +38,7 @@ List all tokens for the authenticated account.
   "status": "success",
   "tokens": [
     {
-      "token_preview": "...gtGwEnvY",
+      "token": "...gtGwEnvY",
       "label": "Primary",
       "role": "admin",
       "created_at": "2026-04-08T08:17:14Z",
@@ -48,7 +48,7 @@ List all tokens for the authenticated account.
       "tunnel_scope": null
     },
     {
-      "token_preview": "...sl83CZ0k",
+      "token": "...sl83CZ0k",
       "label": "CI Pipeline",
       "role": "net-admin",
       "created_at": "2026-04-08T09:00:22Z",
@@ -77,7 +77,7 @@ List all tokens for the authenticated account.
 
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
-  -d "list_tokens=1&token=YOUR_TOKEN"
+  -d "user_list_tokens=1&token=YOUR_TOKEN"
 ```
 
 ---
@@ -116,7 +116,7 @@ curl -s -X POST https://config.doxx.net/v1/ \
 
 ### revoke_token
 
-Revoke (soft-delete) a token. The token becomes immediately unusable but remains visible in `list_tokens` with a `revoked_at` timestamp.
+Revoke (soft-delete) a token. The token becomes immediately unusable but remains visible in `user_list_tokens` with a `revoked_at` timestamp.
 
 **Parameters:**
 
