@@ -126,6 +126,12 @@ Revoke (soft-delete) a token. The token becomes immediately unusable but remains
 | `token` | Yes | Your auth token (must be `admin` role) |
 | `target_token` | Yes | Full token string to revoke |
 
+**Response:**
+
+```json
+{"status": "success", "message": "Token revoked"}
+```
+
 **Safety checks:**
 - Cannot revoke your own active token (the one used in this request)
 - Cannot revoke the last `admin` token on the account
@@ -150,12 +156,20 @@ Update a token's label, role, or expiration. Can be used to reactivate an expire
 | `target_token` | Yes | Full token string to update |
 | `label` | No | New label |
 | `role` | No | New role: `admin`, `net-admin`, or `read-only` |
-| `expires_at` | No | New expiration (RFC3339), or `never`/`null` to remove expiration |
+| `expires_at` | No | New expiration (RFC3339), or `never` or `null` to remove expiration |
+
+**Response:**
+
+```json
+{"status": "success", "message": "Token updated"}
+```
 
 **Safety checks:**
 - Cannot downgrade your own active token's role
 - Works on expired tokens (allows reactivation by setting a future `expires_at`)
 - Does not work on revoked tokens
+
+**Note:** Geo fence, IP fence, and tunnel scope modifications require the target token to be active (not expired and not revoked). To modify fences on an expired token, first reactivate it with `update_token` by extending the expiry, then add/remove fences.
 
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
@@ -182,6 +196,12 @@ If the server cannot determine the client's country (GeoIP lookup failure), the 
 | `country` | Yes | ISO 3166-1 alpha-2 country code (e.g. `US`, `DE`, `GB`) |
 | `label` | No | Human-readable name (e.g. "United States") |
 
+**Response:**
+
+```json
+{"status": "success", "message": "Geo fence added"}
+```
+
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
   -d "add_geo_fence=1&token=YOUR_TOKEN&target_token=TARGET&country=US&label=United+States"
@@ -197,6 +217,12 @@ curl -s -X POST https://config.doxx.net/v1/ \
 | `token` | Yes | Your auth token (must be `admin` role) |
 | `target_token` | Yes | Full token string |
 | `country` | Yes | Country code to remove |
+
+**Response:**
+
+```json
+{"status": "success", "message": "Geo fence removed"}
+```
 
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
@@ -223,6 +249,12 @@ Bare IP addresses (without a prefix length) are automatically normalized to `/32
 | `cidr` | Yes | IPv4 or IPv6 address or CIDR (e.g. `203.0.113.0/24`, `10.1.2.3`, `2001:db8::/32`) |
 | `label` | No | Human-readable name (e.g. "Office network") |
 
+**Response:**
+
+```json
+{"status": "success", "message": "IP fence added"}
+```
+
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
   -d "add_ip_fence=1&token=YOUR_TOKEN&target_token=TARGET&cidr=203.0.113.0/24&label=Office"
@@ -238,6 +270,12 @@ curl -s -X POST https://config.doxx.net/v1/ \
 | `token` | Yes | Your auth token (must be `admin` role) |
 | `target_token` | Yes | Full token string |
 | `cidr` | Yes | CIDR to remove (must match exactly as stored) |
+
+**Response:**
+
+```json
+{"status": "success", "message": "IP fence removed"}
+```
 
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
@@ -262,6 +300,12 @@ Restrict a token to only operate on specific tunnels. If any tunnel scope entrie
 | `tunnel_token` | Yes | Tunnel token to grant access to (must be owned by your account) |
 | `label` | No | Human-readable name (e.g. "Production server") |
 
+**Response:**
+
+```json
+{"status": "success", "message": "Tunnel scope added"}
+```
+
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
   -d "add_token_tunnel=1&token=YOUR_TOKEN&target_token=TARGET&tunnel_token=TUNNEL_ID&label=Production"
@@ -277,6 +321,12 @@ curl -s -X POST https://config.doxx.net/v1/ \
 | `token` | Yes | Your auth token (must be `admin` role) |
 | `target_token` | Yes | Full token string |
 | `tunnel_token` | Yes | Tunnel token to remove from scope |
+
+**Response:**
+
+```json
+{"status": "success", "message": "Tunnel scope removed"}
+```
 
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
