@@ -20,11 +20,25 @@ Each auth token has a role that determines what it can do:
 
 | Role | Permissions |
 |------|------------|
-| **admin** | Full access: account, billing, tunnels, DNS, firewall, token management |
-| **net-admin** | Create/delete tunnels, manage DNS, change configs, firewall. No billing or account changes. |
-| **read-only** | View tunnels, stats, alerts, DNS records. No modifications. |
+| **admin** | Full access: everything net-admin can do, plus account management (update_profile, delete_account, create_account_recovery), token CRUD (create_token, revoke_token, unrevoke_token, delete_token, update_token), geo/IP fencing, tunnel scoping, device deletion, and Apple/billing operations |
+| **net-admin** | Network configuration: everything read-only can do, plus create/update/delete tunnels, manage DNS records and domains, firewall rules, proxy settings, saved profiles, IP address assignment, device rename/offline, and subscription device management |
+| **read-only** | View only: list tunnels, servers, domains, DNS records, firewall rules, profiles, addresses, blocklist stats, proxy config. No modifications. |
 
-Roles are hierarchical: `admin` includes all `net-admin` permissions, which includes all `read-only` permissions. The primary token created at account signup is always `admin`.
+Roles are hierarchical: `admin` includes all `net-admin` permissions, which includes all `read-only` permissions. The primary token created at account signup is always `admin`. New tokens created via `create_token` default to `read-only` if no role is specified.
+
+## RBAC Enforcement
+
+Every mutating endpoint enforces its minimum role requirement inline. When a token's role is insufficient, the API returns:
+
+```json
+{
+  "status": "error",
+  "message": "insufficient_role"
+}
+```
+HTTP 403
+
+The `min_role` field in the API's self-documenting JSON output (GET `https://config.doxx.net/`) indicates the required role for each endpoint.
 
 ## Security Restrictions
 

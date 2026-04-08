@@ -95,6 +95,20 @@ doxx.net uses token-based auth. No usernames, no passwords, no email.
 
 **You cannot create accounts via API.** A human must visit [a0x13.doxx.net](https://a0x13.doxx.net), complete the proof-of-work challenge, and accept the Terms of Service. The auth token from that process is then used for all API calls.
 
+### Token Roles (RBAC)
+
+Each auth token has a role that controls which endpoints it can access:
+
+| Role | Access Level |
+|------|-------------|
+| **admin** | Full access: account management, token CRUD, geo/IP fencing, plus all net-admin and read-only permissions |
+| **net-admin** | Network changes: tunnels, DNS, domains, firewall, proxy, profiles, IP addresses, plus all read-only permissions |
+| **read-only** | View only: list tunnels, servers, domains, DNS records, firewall rules, profiles, addresses |
+
+Roles are hierarchical: `admin` > `net-admin` > `read-only`. The primary token from account creation is always `admin`. Additional tokens created via `create_token` default to `read-only`.
+
+Endpoints that require a specific role return HTTP 403 with `{"status":"error","message":"insufficient_role"}` when the token's role is insufficient.
+
 ---
 
 ## Common Workflows
@@ -571,6 +585,8 @@ curl -s -X POST $API -d "tos_status=1&token=$TOKEN"
 
 ### `accept_tos`
 
+Requires net-admin role.
+
 ```bash
 curl -s -X POST $API -d "accept_tos=1&token=$TOKEN"
 ```
@@ -602,6 +618,8 @@ curl -s -X POST $API -d "get_profile=1&token=$TOKEN"
 
 ### `update_profile`
 
+Requires admin role.
+
 | Parameter | Required |
 |-----------|----------|
 | `token` | Yes |
@@ -609,6 +627,8 @@ curl -s -X POST $API -d "get_profile=1&token=$TOKEN"
 | `name` | No |
 
 ### `create_account_recovery`
+
+Requires admin role.
 
 ```bash
 curl -s -X POST $API -d "create_account_recovery=1&token=$TOKEN"
@@ -635,6 +655,8 @@ curl -s -X POST $API -d "create_account_recovery=1&token=$TOKEN"
 ```
 
 ### `delete_account`
+
+Requires admin role.
 
 ```bash
 curl -s -X POST $API -d "delete_account=1&token=$TOKEN"
@@ -716,6 +738,8 @@ curl -s -X POST $API -d "list_tunnels=1&token=$TOKEN"
 
 ### `create_tunnel`
 
+Requires net-admin role.
+
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `token` | Yes | Auth token |
@@ -765,6 +789,8 @@ curl -s -X POST $API -d "list_tunnels=1&token=$TOKEN"
 ```
 
 ### `delete_tunnel`
+
+Requires net-admin role.
 
 | Parameter | Required |
 |-----------|----------|

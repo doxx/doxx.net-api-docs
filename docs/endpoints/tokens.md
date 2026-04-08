@@ -10,11 +10,11 @@ All token management endpoints require authentication with an existing token. Th
 
 | Role | Permissions |
 |------|------------|
-| **admin** | Full access: account, billing, tunnels, DNS, firewall, token management |
-| **net-admin** | Create/delete tunnels, manage DNS, change configs, firewall rules. No billing or account changes. |
-| **read-only** | View tunnels, stats, alerts, DNS records. No modifications. |
+| **admin** | Full access: everything net-admin can do, plus account management (update_profile, delete_account, create_account_recovery), token CRUD (create_token, revoke_token, unrevoke_token, delete_token, update_token), geo/IP fencing, tunnel scoping, device deletion, and Apple/billing operations |
+| **net-admin** | Network configuration: everything read-only can do, plus create/update/delete tunnels, manage DNS records and domains, firewall rules, proxy settings, saved profiles, IP address assignment, device rename/offline, and subscription device management |
+| **read-only** | View only: list tunnels, servers, domains, DNS records, firewall rules, profiles, addresses, blocklist stats, proxy config. No modifications. |
 
-Roles are hierarchical: `admin` includes all `net-admin` permissions, which includes all `read-only` permissions.
+Roles are hierarchical: `admin` includes all `net-admin` permissions, which includes all `read-only` permissions. The primary token created at account signup is always `admin`. New tokens created via `create_token` default to `read-only` if no role is specified.
 
 ---
 
@@ -93,7 +93,7 @@ Generate a new auth token for the account.
 | `create_token` | Yes | Set to `1` |
 | `token` | Yes | Your auth token (must be `admin` role) |
 | `label` | No | Human-readable name (max 64 chars, alphanumeric + spaces/hyphens/apostrophes/periods) |
-| `role` | No | `admin`, `net-admin`, or `read-only`. Defaults to `admin` |
+| `role` | No | `admin`, `net-admin`, or `read-only`. Defaults to `read-only` |
 | `expires_at` | No | Expiration time in RFC3339 format (e.g. `2027-01-01T00:00:00Z`). Omit for no expiration |
 
 **Response:**
@@ -139,6 +139,65 @@ Revoke (soft-delete) a token. The token becomes immediately unusable but remains
 ```bash
 curl -s -X POST https://config.doxx.net/v1/ \
   -d "revoke_token=1&token=YOUR_TOKEN&target_token=TOKEN_TO_REVOKE"
+```
+
+---
+
+### unrevoke_token
+
+Re-enable a previously revoked token. Clears the `revoked_at` timestamp and the token becomes immediately usable again with its original role, geo fences, IP fences, and tunnel scopes intact.
+
+**Parameters:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `unrevoke_token` | Yes | Set to `1` |
+| `token` | Yes | Your auth token (must be `admin` role) |
+| `target_token` | Yes | Full token string to unrevoke |
+
+**Response:**
+
+```json
+{"status": "success", "message": "Token re-enabled"}
+```
+
+**Notes:**
+- Only works on revoked tokens (returns error if the token is not revoked)
+- All geo fences, IP fences, and tunnel scopes are preserved through revoke/unrevoke
+
+```bash
+curl -s -X POST https://config.doxx.net/v1/ \
+  -d "unrevoke_token=1&token=YOUR_TOKEN&target_token=TOKEN_TO_UNREVOKE"
+```
+
+---
+
+### delete_token
+
+Permanently deletes a token and all its associated geo fences, IP fences, and tunnel scopes. Unlike `revoke_token`, the token is completely removed from the database and will no longer appear in `user_list_tokens`.
+
+**Parameters:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `delete_token` | Yes | Set to `1` |
+| `token` | Yes | Your auth token (must be `admin` role) |
+| `target_token` | Yes | Full token string to delete |
+
+**Response:**
+
+```json
+{"status": "success", "message": "Token permanently deleted"}
+```
+
+**Safety checks:**
+- Cannot delete your own active token (the one used in this request)
+- Cannot delete the last `admin` token on the account
+- Works on active, expired, and revoked tokens
+
+```bash
+curl -s -X POST https://config.doxx.net/v1/ \
+  -d "delete_token=1&token=YOUR_TOKEN&target_token=TOKEN_TO_DELETE"
 ```
 
 ---
@@ -337,7 +396,18 @@ curl -s -X POST https://config.doxx.net/v1/ \
 
 ## Account Recovery
 
-When recovery codes are used (`verify_account_recovery`), all existing tokens on the account are revoked and a new `admin` token is created. This is a security measure that assumes compromise when recovery codes are needed.
+When recovery codes are used (`verify_account_recovery`), the following happens:
+
+1. **Nuclear revoke**: All existing tokens on the account are revoked (`revoked_at` set to now). This assumes compromise since someone is using recovery codes.
+2. **New admin token**: A fresh `admin` token with label `Primary` is created and returned.
+3. **Code consumed**: The recovery code is marked as used (one-time use).
+
+Old tokens and their geo fences, IP fences, and tunnel scopes are preserved as revoked rows. After recovery, an admin can:
+- Use `unrevoke_token` to selectively restore tokens that were not compromised
+- Use `delete_token` to permanently clean up old revoked tokens
+- Use `user_list_tokens` to review all tokens (revoked tokens show a `revoked_at` timestamp)
+
+Recovery codes are generated once per account via `create_account_recovery` (10 codes) and cannot be regenerated.
 
 ## Account Deletion
 
