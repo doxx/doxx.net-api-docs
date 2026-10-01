@@ -288,9 +288,7 @@ curl -s -X POST $API \
   -o $DOMAIN.crt
 
 # Step 5: Download the root CA (clients need to trust this)
-curl -s -o doxx-root-ca.crt https://raw.githubusercontent.com/doxxcorp/style/main/logo-png/isotype-black/isotype-black-64.png
-# Actually get the CA from your portal or the a0x13 assets:
-# https://a0x13.doxx.net/assets/doxx-root-ca.crt
+curl -s -o doxx-root-ca.crt https://a0x13.doxx.net/assets/doxx-root-ca.crt
 
 # Step 6: Install in nginx/caddy/etc
 # nginx example:
@@ -307,6 +305,8 @@ dig A $DOMAIN @a.root-dx.net +short
 ```
 
 **Important:** doxx.net TLS certificates are signed by the doxx.net root CA, not a public CA like Let's Encrypt. Clients connecting to your service need the doxx.net root CA installed in their trust store. VPN users on doxx.net already have it. For non-VPN users, distribute the root CA cert or use it for internal/development services.
+
+**Scoped trust:** the root CA is name constrained (RFC 5280) to the doxx namespace: the 196 doxx TLDs plus doxx-owned public domains. Installing it does NOT let doxx.net (or anyone holding the CA key) issue trusted certificates for domains outside that namespace: a cert for `google.com` signed by this CA is rejected by every modern browser and OS. This also means `sign_certificate` only works for domains under doxx TLDs; imported public domains (.com etc.) must use a public CA like Let's Encrypt.
 
 ---
 
@@ -348,7 +348,7 @@ Register domains under any of these top-level domains. Default is `.doxx` if you
 ### How It Works
 
 1. You generate a private key and CSR locally (key never leaves your machine)
-2. Submit the CSR to the `sign_certificate` endpoint
+2. Submit the CSR to the `sign_certificate` endpoint (domain must be under a doxx TLD)
 3. doxx.net signs it with the doxx.net root CA and returns the certificate
 4. The certificate is automatically upgraded to wildcard (`*.domain` + `domain`)
 
@@ -356,11 +356,14 @@ Register domains under any of these top-level domains. Default is `.doxx` if you
 
 | Property | Value |
 |----------|-------|
-| Subject | `CN=doxx.net root CA, O=doxx.net root CA` |
-| Validity | Jan 2025 - Jan 2035 (10 years) |
-| Key Type | RSA |
-| Signed Certs Validity | 365 days |
+| Subject | `CN=doxx.net root CA 2026, O=doxx.net` |
+| Validity | Aug 2026 - Aug 2036 (10 years) |
+| Key Type | RSA 4096 |
+| Name Constraints | 196 doxx TLDs + doxx-owned public domains (critical, RFC 5280) |
+| Signed Certs Validity | 825 days (the maximum Apple platforms accept for TLS server certs) |
 | SAN | Wildcard + base domain automatically |
+
+The previous root CA (`CN=doxx.net root CA`, issued Jan 2025, serial `26d1ede611866a5c252df1c5f7d3d3f977f52fd8`) is retired. It had no name constraints, so remove it from any trust store it was installed in. Certificates signed by it are no longer issued; re-sign via `sign_certificate` to chain to the 2026 CA.
 
 ### Installing the Root CA
 
@@ -373,22 +376,27 @@ curl -o doxx-root-ca.crt https://a0x13.doxx.net/assets/doxx-root-ca.crt
 
 **macOS:**
 ```bash
+# Remove the retired 2025 CA if present, then install the current one
+sudo security delete-certificate -Z 3B94484267C82DD6F876374E58F3C319FD9FC49D /Library/Keychains/System.keychain 2>/dev/null
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain doxx-root-ca.crt
 ```
 
 **Linux (Debian/Ubuntu):**
 ```bash
+# Overwrites the retired 2025 CA if present (same filename)
 sudo cp doxx-root-ca.crt /usr/local/share/ca-certificates/doxx-root-ca.crt
-sudo update-ca-certificates
+sudo update-ca-certificates --fresh
 ```
 
 **Windows:**
 ```
+:: Remove the retired 2025 CA if present, then install the current one
+certutil -delstore root 26d1ede611866a5c252df1c5f7d3d3f977f52fd8
 certutil -addstore root doxx-root-ca.crt
 ```
 
 **Firefox** (uses its own CA store):
-Settings > Privacy & Security > Certificates > View Certificates > Import
+Settings > Privacy & Security > Certificates > View Certificates > Import (delete the old "doxx.net root CA" entry if listed)
 
 **VPN users:** If you're connected to doxx.net via WireGuard with DNS set to `10.10.10.10`, the root CA is already trusted by the VPN DNS resolver for `.doxx` domain resolution. But for TLS (HTTPS), you still need to install the root CA in your OS/browser trust store.
 
@@ -1251,7 +1259,7 @@ Signs a CSR with the doxx.net root CA. Auto-upgrades to wildcard. **Returns raw 
 | Parameter | Required |
 |-----------|----------|
 | `token` | Yes |
-| `domain` | Yes (must own it) |
+| `domain` | Yes (must own it, and it must be under a doxx TLD) |
 | `csr` | Yes (PEM-encoded) |
 
 ```bash
@@ -1260,7 +1268,7 @@ curl -s -X POST $API \
   --data-urlencode "csr=$(cat mysite.csr)" -o mysite.crt
 ```
 
-The certificate includes SAN: `DNS:*.mysite.doxx, DNS:mysite.doxx`
+The certificate includes SAN: `DNS:*.mysite.doxx, DNS:mysite.doxx` and is valid for 825 days (the maximum Apple platforms accept for TLS server certificates, even from user-installed roots). Imported public domains (.com etc.) cannot be signed: the root CA is name constrained to the doxx namespace, so such a cert would never validate. Use a public CA for those.
 
 ---
 
